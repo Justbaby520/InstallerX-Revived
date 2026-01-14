@@ -49,7 +49,10 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build Stable Release APKs
-        run: ./gradlew assembleOnlineStableRelease assembleOfflineStableRelease
+        run: |
+          ./gradlew \
+            assembleOnlinePreviewRelease \
+            -PAPP_ID=com.android.packageinstaller
 
       - name: Find and Rename APKs with APK Version and Date
         run: |
