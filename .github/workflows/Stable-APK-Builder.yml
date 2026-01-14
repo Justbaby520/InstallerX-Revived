@@ -1,5 +1,3 @@
-name: Stable APK Builder
-
 on:
   workflow_dispatch:
 
@@ -52,14 +50,12 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew assembleOnlineStableRelease assembleOfflineStableRelease
+        run: ./gradlew assembleOnlineStableRelease assembleOfflineStableRelease -PAPP_ID=com.android.packageinstaller
 
       - name: Find and Rename APKs with APK Version and Date
         run: |
           PROJECT_NAME="InstallerX-Revived"
           DATE=$(date +%Y%m%d)
-
-          # 获取 APK versionName
           VERSION=$(./gradlew -q printVersionName | tail -n1)
 
           mkdir -p artifacts
@@ -77,8 +73,12 @@ jobs:
             cp "$ORIGINAL_APK" "$NEW_APK"
           done
 
-      - name: Upload APKs as Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: InstallerX-APKs
-          path: artifacts/*.apk
+          name: "InstallerX Revived stable ${{ github.ref_name }}"
+          tag_name: ${{ github.ref_name }}
+          body: "Stable release built on ${{ github.run_id }}"
+          files: artifacts/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
