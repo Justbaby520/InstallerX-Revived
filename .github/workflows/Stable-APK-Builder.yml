@@ -49,10 +49,10 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build Stable Release APKs
-        run: |
-          ./gradlew \
-            assembleOnlinePreviewRelease \
-            -PAPP_ID=com.android.packageinstaller
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./gradlew assembleOnlineStableRelease assembleOfflineStableRelease
 
       - name: Find and Rename APKs with APK Version and Date
         run: |
