@@ -38,12 +38,13 @@ jobs:
         run: |
           mkdir -p keystore
           echo "${{ secrets.SIGNING_KEY_STORE_BASE64 }}" | base64 --decode > keystore/carlyu.jks
+
           cat > keystore.properties <<EOF
-          storeFile=keystore/carlyu.jks
-          keyAlias=${{ secrets.SIGNING_KEY_ALIAS }}
-          keyPassword=${{ secrets.SIGNING_KEY_PASSWORD }}
-          storePassword=${{ secrets.SIGNING_STORE_PASSWORD }}
-          EOF
+storeFile=keystore/carlyu.jks
+keyAlias=${{ secrets.SIGNING_KEY_ALIAS }}
+keyPassword=${{ secrets.SIGNING_KEY_PASSWORD }}
+storePassword=${{ secrets.SIGNING_STORE_PASSWORD }}
+EOF
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
@@ -62,6 +63,7 @@ jobs:
           VERSION=$(./gradlew -q printVersionName | tail -n1)
 
           mkdir -p artifacts
+
           APK_DIR="app/build/outputs/apk/onlineStable/release"
           ORIGINAL_APK=$(find "$APK_DIR" -maxdepth 1 -type f -name "*.apk" | head -n 1)
 
@@ -76,10 +78,10 @@ jobs:
 
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "DATE=$DATE" >> $GITHUB_ENV
+          echo "NEW_APK_PATH=$NEW_APK" >> $GITHUB_ENV
 
       - name: Upload Online Stable APK as Artifact
         uses: actions/upload-artifact@v4
         with:
-          # 用版本号 + run_number 命名，保证每次唯一
-          name: online-apk-${{ env.NEW_VERSION }}-${{ github.run_number }}
-          path: app/build/outputs/apk/onlineStable/release/*.apk
+          name: online-apk-${{ env.VERSION }}-${{ env.DATE }}-${{ github.run_number }}
+          path: ${{ env.NEW_APK_PATH }}
