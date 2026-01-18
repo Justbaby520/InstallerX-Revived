@@ -40,11 +40,11 @@ jobs:
           echo "${{ secrets.SIGNING_KEY_STORE_BASE64 }}" | base64 --decode > keystore/carlyu.jks
 
           cat > keystore.properties <<EOF
-storeFile=keystore/carlyu.jks
-keyAlias=${{ secrets.SIGNING_KEY_ALIAS }}
-keyPassword=${{ secrets.SIGNING_KEY_PASSWORD }}
-storePassword=${{ secrets.SIGNING_STORE_PASSWORD }}
-EOF
+            storeFile=keystore/carlyu.jks
+            keyAlias=${{ secrets.SIGNING_KEY_ALIAS }}
+            keyPassword=${{ secrets.SIGNING_KEY_PASSWORD }}
+            storePassword=${{ secrets.SIGNING_STORE_PASSWORD }}
+            EOF
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
