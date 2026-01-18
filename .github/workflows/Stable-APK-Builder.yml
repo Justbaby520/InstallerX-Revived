@@ -77,7 +77,7 @@ jobs:
       - name: Build Online Stable Release APK
         env:
           VERSION_NAME: ${{ env.VERSION_NAME }}
-        run: ./gradlew assembleOnlineStableRelease -PAPP_ID=com.android.packageinstaller -PversionName=${VERSION_NAME}
+        run: ./gradlew assembleOnlineStableRelease -PversionName=${VERSION_NAME} -PAPP_ID=com.android.packageinstaller
 
       - name: Upload Online Stable APK as Artifact
         uses: actions/upload-artifact@v4
