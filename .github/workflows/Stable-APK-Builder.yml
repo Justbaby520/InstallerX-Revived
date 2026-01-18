@@ -77,12 +77,9 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "DATE=$DATE" >> $GITHUB_ENV
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload Online Stable APK as Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: "InstallerX stable v${{ env.VERSION }} (${DATE})"
-          tag_name: "v${{ env.VERSION }}-${DATE}-${{ github.run_number }}"
-          body: "Stable release built on run ${{ github.run_id }}"
-          files: artifacts/*.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 用版本号 + run_number 命名，保证每次唯一
+          name: online-apk-${{ env.NEW_VERSION }}-${{ github.run_number }}
+          path: app/build/outputs/apk/onlineStable/release/*.apk
