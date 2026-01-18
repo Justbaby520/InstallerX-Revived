@@ -1,4 +1,4 @@
-name: Stable APK Builder
+name: Stable APK Builder (Optimized)
 
 on:
   workflow_dispatch:
@@ -22,10 +22,21 @@ jobs:
           distribution: zulu
           java-version: '25'
 
+      # ------------------- Gradle 缓存 -------------------
+      - name: Cache Gradle
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-cache-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-cache-${{ runner.os }}-
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: true
+          cache-read-only: false  # 可写缓存
 
       - name: Verify Keystore
         run: |
@@ -48,41 +59,24 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      - name: Update versionName format
-        id: version
+      # ------------------- 构建 APK -------------------
+      - name: Build Online Stable Release APK (optimized)
         run: |
-          # 读取 BASE_VERSION
-          BASE_VERSION=$(./gradlew -q properties | grep '^BASE_VERSION:' | awk '{print $2}')
-          echo "BASE_VERSION=$BASE_VERSION"
+          ./gradlew assembleOnlineStableRelease \
+            -PAPP_ID=com.android.packageinstaller \
+            --parallel \
+            --daemon \
+            --max-workers=$(nproc) \
+            --configuration-cache \
+            --no-build-cache
+          
+      - name: List APKs for debugging
+        run: ls -R app/build/outputs/apk
 
-          # 拆分 A.B.C
-          A=$(echo $BASE_VERSION | cut -d. -f1)
-          B=$(echo $BASE_VERSION | cut -d. -f2)
-          C=$(echo $BASE_VERSION | cut -d. -f3)
-
-          # 自增 patch
-          C_NEW=$((C + 1))
-
-          # 获取短 commit SHA
-          SHORT_SHA=$(git rev-parse --short HEAD)
-
-          # 拼接新 versionName
-          NEW_VERSION="${A}.${B}.${C_NEW}.${SHORT_SHA}"
-          echo "Generated Version: $NEW_VERSION"
-
-          # 导出环境变量
-          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
-          echo "VERSION_NAME=$NEW_VERSION" >> $GITHUB_ENV
-
-      - name: Build Online Stable Release APK
-        env:
-          VERSION_NAME: ${{ env.VERSION_NAME }}
-        run: ./gradlew assembleOnlineStableRelease -PversionName=${VERSION_NAME} -PAPP_ID=com.android.packageinstaller
-
+      # ------------------- 上传 Artifact -------------------
       - name: Upload Online Stable APK as Artifact
         uses: actions/upload-artifact@v4
         with:
-          # 用版本号 + run_number 命名，保证每次唯一
-          name: online-apk-${{ env.NEW_VERSION }}-${{ github.run_number }}
+          name: online-apk-${{ github.run_number }}
           path: app/build/outputs/apk/onlineStable/release/*.apk
           retention-days: 15
