@@ -48,39 +48,41 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      - name: Build Stable Release APKs
+      - name: Build Online Stable Release APK
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew assembleOnlineStableRelease assembleOfflineStableRelease -PAPP_ID=com.android.packageinstaller
+        run: ./gradlew assembleOnlineStableRelease -PAPP_ID=com.android.packageinstaller
 
-      - name: Find and Rename APKs with APK Version and Date
+      - name: Find and Rename Online APK with Version and Date
+        id: rename_apk
         run: |
-          PROJECT_NAME="InstallerX-Revived"
+          PROJECT_NAME="InstallerX"
           DATE=$(date +%Y%m%d)
           VERSION=$(./gradlew -q printVersionName | tail -n1)
 
           mkdir -p artifacts
-          for FLAVOR in online offline; do
-            APK_DIR="app/build/outputs/apk/${FLAVOR}Stable/release"
-            ORIGINAL_APK=$(find "$APK_DIR" -maxdepth 1 -type f -name "*.apk" | head -n 1)
+          APK_DIR="app/build/outputs/apk/onlineStable/release"
+          ORIGINAL_APK=$(find "$APK_DIR" -maxdepth 1 -type f -name "*.apk" | head -n 1)
 
-            if [ -z "$ORIGINAL_APK" ]; then
-              echo "ERROR: APK not found in $APK_DIR"
-              ls -R app/build/outputs/apk
-              exit 1
-            fi
+          if [ -z "$ORIGINAL_APK" ]; then
+            echo "ERROR: APK not found in $APK_DIR"
+            ls -R app/build/outputs/apk
+            exit 1
+          fi
 
-            NEW_APK="artifacts/${PROJECT_NAME}-${VERSION}-${FLAVOR}-${DATE}.apk"
-            cp "$ORIGINAL_APK" "$NEW_APK"
-          done
+          NEW_APK="artifacts/${PROJECT_NAME}_online_v${VERSION}_${DATE}.apk"
+          cp "$ORIGINAL_APK" "$NEW_APK"
+
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "DATE=$DATE" >> $GITHUB_ENV
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "InstallerX Revived stable ${{ github.ref_name }}"
-          tag_name: ${{ github.ref_name }}
-          body: "Stable release built on ${{ github.run_id }}"
+          name: "InstallerX stable v${{ env.VERSION }} (${DATE})"
+          tag_name: "v${{ env.VERSION }}-${DATE}-${{ github.run_number }}"
+          body: "Stable release built on run ${{ github.run_id }}"
           files: artifacts/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
