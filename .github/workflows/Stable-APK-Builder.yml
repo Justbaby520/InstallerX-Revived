@@ -38,13 +38,12 @@ jobs:
         run: |
           mkdir -p keystore
           echo "${{ secrets.SIGNING_KEY_STORE_BASE64 }}" | base64 --decode > keystore/carlyu.jks
-
-          cat > keystore.properties <<EOF
-            storeFile=keystore/carlyu.jks
-            keyAlias=${{ secrets.SIGNING_KEY_ALIAS }}
-            keyPassword=${{ secrets.SIGNING_KEY_PASSWORD }}
-            storePassword=${{ secrets.SIGNING_STORE_PASSWORD }}
-            EOF
+          cat <<EOF > keystore.properties
+          storeFile=keystore/carlyu.jks
+          keyAlias=${{ secrets.SIGNING_KEY_ALIAS }}
+          keyPassword=${{ secrets.SIGNING_KEY_PASSWORD }}
+          storePassword=${{ secrets.SIGNING_STORE_PASSWORD }}
+          EOF
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
@@ -80,8 +79,13 @@ jobs:
           echo "DATE=$DATE" >> $GITHUB_ENV
           echo "NEW_APK_PATH=$NEW_APK" >> $GITHUB_ENV
 
-      - name: Upload Online Stable APK as Artifact
-        uses: actions/upload-artifact@v4
+      - name: Create Latest Alpha Pre-Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: online-apk-${{ env.VERSION }}-${{ env.DATE }}-${{ github.run_number }}
-          path: ${{ env.NEW_APK_PATH }}
+          name: "${{ env.VERSION }}-${{ env.DATE }}-${{ github.run_number }} Alpha"
+          tag_name: "alpha-v${{ env.VERSION }}-${{ github.run_number }}"
+          draft: false
+          prerelease: true
+          files: ${{ env.NEW_APK_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
