@@ -61,15 +61,8 @@ jobs:
 
       # ------------------- 构建 APK -------------------
       - name: Build Online Stable Release APK (optimized)
-        run: |
-          ./gradlew assembleOnlineStableRelease \
-            -PAPP_ID=com.android.packageinstaller \
-            --parallel \
-            --daemon \
-            --max-workers=$(nproc) \
-            --configuration-cache \
-            --no-build-cache
-          
+        run: ./gradlew assembleOnlineStableRelease -PAPP_ID=com.android.packageinstaller
+
       - name: List APKs for debugging
         run: ls -R app/build/outputs/apk
 
