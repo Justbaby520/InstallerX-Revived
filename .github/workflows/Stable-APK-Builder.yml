@@ -1,10 +1,10 @@
-name: Stable APK Builder (Optimized)
+name: Stable APK Builder
 
 on:
   workflow_dispatch:
 
 jobs:
-  build_and_upload:
+  build_and_release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -22,21 +22,10 @@ jobs:
           distribution: zulu
           java-version: '25'
 
-      # ------------------- Gradle 缓存 -------------------
-      - name: Cache Gradle
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-cache-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            gradle-cache-${{ runner.os }}-
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: false  # 可写缓存
+          cache-read-only: true
 
       - name: Verify Keystore
         run: |
@@ -59,17 +48,41 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      # ------------------- 构建 APK -------------------
-      - name: Build Online Stable Release APK (optimized)
+      - name: Build Online Stable Release APK
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./gradlew assembleOnlineStableRelease -PAPP_ID=com.android.packageinstaller
 
-      - name: List APKs for debugging
-        run: ls -R app/build/outputs/apk
+      - name: Find and Rename Online APK with Version and Date
+        id: rename_apk
+        run: |
+          PROJECT_NAME="InstallerX"
+          DATE=$(date +%Y%m%d)
+          VERSION=$(./gradlew -q printVersionName | tail -n1)
 
-      # ------------------- 上传 Artifact -------------------
-      - name: Upload Online Stable APK as Artifact
-        uses: actions/upload-artifact@v4
+          mkdir -p artifacts
+          APK_DIR="app/build/outputs/apk/onlineStable/release"
+          ORIGINAL_APK=$(find "$APK_DIR" -maxdepth 1 -type f -name "*.apk" | head -n 1)
+
+          if [ -z "$ORIGINAL_APK" ]; then
+            echo "ERROR: APK not found in $APK_DIR"
+            ls -R app/build/outputs/apk
+            exit 1
+          fi
+
+          NEW_APK="artifacts/${PROJECT_NAME}_online_v${VERSION}_${DATE}.apk"
+          cp "$ORIGINAL_APK" "$NEW_APK"
+
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "DATE=$DATE" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: online-apk-${{ github.run_number }}
-          path: app/build/outputs/apk/onlineStable/release/*.apk
-          retention-days: 15
+          name: "InstallerX stable v${{ env.VERSION }} (${DATE})"
+          tag_name: "v${{ env.VERSION }}-${DATE}-${{ github.run_number }}"
+          body: "Stable release built on run ${{ github.run_id }}"
+          files: artifacts/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
