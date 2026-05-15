@@ -1,0 +1,59 @@
+name: Generate Random Keystore (Single File)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate-keystore:
+    runs-on: ubuntu-latest  # 最新 Ubuntu 环境
+
+    steps:
+      # 使用最新 Temurin JDK
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: '20'   # 最新稳定 Java 版本
+
+      - name: Generate Keystore and Single Output File
+        run: |
+          set -e
+
+          # 生成完全随机 alias, store password, key password
+          ALIAS=$(openssl rand -hex 8)
+          STORE_PASS=$(openssl rand -base64 16)
+          KEY_PASS=$(openssl rand -base64 16)
+
+          # keystore 文件名
+          KEYSTORE_FILE="mykeystore.jks"
+
+          # 生成 keystore
+          keytool -genkeypair \
+            -alias "$ALIAS" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 3650 \
+            -storetype JKS \
+            -keystore "$KEYSTORE_FILE" \
+            -storepass "$STORE_PASS" \
+            -keypass "$KEY_PASS" \
+            -dname "CN=Random, OU=Dev, O=RandomOrg, L=RandomCity, S=RandomState, C=US"
+
+          # 转 base64
+          KEYSTORE_BASE64=$(base64 "$KEYSTORE_FILE" | tr -d '\n')
+
+          # 合成单一文本文件
+          OUTPUT_FILE="keystore_info.txt"
+          {
+            echo "keystore_base64=$KEYSTORE_BASE64"
+            echo "alias=$ALIAS"
+            echo "store_pass=$STORE_PASS"
+            echo "key_pass=$KEY_PASS"
+          } > "$OUTPUT_FILE"
+
+      # 上传 artifact，供下载
+      - name: Upload Single Text File
+        uses: actions/upload-artifact@v7
+        with:
+          name: keystore-info
+          path: keystore_info.txt
