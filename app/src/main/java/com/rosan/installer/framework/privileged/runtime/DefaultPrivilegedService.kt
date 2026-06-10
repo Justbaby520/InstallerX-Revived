@@ -8,7 +8,6 @@ import android.app.IApplicationThread
 import android.app.ProfilerInfo
 import android.content.ComponentName
 import android.content.ContentResolver
-import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.IPackageManager
@@ -22,9 +21,12 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.IUserManager
+import android.os.Parcel
+import android.os.ParcelFileDescriptor
 import android.os.RemoteException
-import android.os.ServiceManager
+import android.os.ResultReceiver
 import android.provider.Settings
+import android.system.Os
 import androidx.core.graphics.drawable.toBitmap
 import androidx.core.net.toUri
 import com.rosan.installer.ICommandOutputListener
@@ -32,12 +34,8 @@ import com.rosan.installer.core.reflection.ReflectionProvider
 import com.rosan.installer.core.reflection.getValue
 import com.rosan.installer.core.reflection.invoke
 import com.rosan.installer.core.reflection.invokeStatic
-import com.rosan.installer.framework.privileged.util.ShizukuContext
-import com.rosan.installer.framework.privileged.util.ShizukuHook
-import com.rosan.installer.framework.privileged.util.SystemContext
 import com.rosan.installer.framework.privileged.util.deletePaths
 import com.rosan.installer.framework.privileged.util.resolveSettingsBinder
-import com.rosan.installer.domain.device.provider.DeviceCapabilityProvider
 import com.rosan.installer.util.pm.REASON_REMIND_OWNERSHIP
 import org.koin.core.component.inject
 import timber.log.Timber
@@ -46,133 +44,48 @@ import java.io.IOException
 import java.nio.charset.StandardCharsets
 import android.os.Process as AndroidProcess
 
-class DefaultPrivilegedService(
-    private val isHookMode: Boolean,
-    private val binderWrapper: ((IBinder) -> IBinder)? = null
+class DefaultPrivilegedService private constructor(
+    private val runtime: PrivilegedRuntime
 ) : BasePrivilegedService(), PrivilegedOperations {
     companion object {
         private const val TAG = "PrivilegedService"
-    }
 
-    enum class WorkingMode {
-        ROOT,       // Process Hook Mode (binderWrapper != null)
-        SHIZUKU,    // Hook Mode (isHookMode == true)
-        SYSTEM,     // System App Mode
-        UserService // UserService Mode
+        private const val SHELL_COMMAND_TRANSACTION = 0x5f434d44 // '_CMD'
+        private const val SYSTEM_UID = 1000
+
+        fun system() = DefaultPrivilegedService(PrivilegedRuntime.SystemApp)
+
+        fun userService() = DefaultPrivilegedService(PrivilegedRuntime.UserService)
+
+        fun shizukuHook() = DefaultPrivilegedService(PrivilegedRuntime.ShizukuHooked)
+
+        fun binderWrapped(
+            name: String,
+            useAppCallerPackage: Boolean,
+            binderWrapper: (IBinder) -> IBinder
+        ) = DefaultPrivilegedService(PrivilegedRuntime.BinderWrapped(name, useAppCallerPackage, binderWrapper))
     }
 
     private val reflect by inject<ReflectionProvider>()
-    private val capabilityProvider by inject<DeviceCapabilityProvider>()
-
-    // Cache the working mode lazily to avoid Koin injection lifecycle issues
-    // with capabilityProvider during class instantiation.
-    private val workingMode: WorkingMode by lazy {
-        when {
-            binderWrapper != null -> WorkingMode.ROOT
-            isHookMode -> WorkingMode.SHIZUKU
-            capabilityProvider.isSystemApp -> WorkingMode.SYSTEM
-            else -> WorkingMode.UserService
-        }
-    }
 
     private val iPackageManager: IPackageManager by lazy {
-        when (workingMode) {
-            WorkingMode.ROOT -> {
-                Timber.tag(TAG).d("Getting IPackageManager in Process Hook Mode.")
-                val original = ServiceManager.getService("package")
-                IPackageManager.Stub.asInterface(binderWrapper!!.invoke(original))
-            }
-
-            WorkingMode.SHIZUKU -> {
-                Timber.tag(TAG).d("Getting IPackageManager in Hook Mode (Directly).")
-                ShizukuHook.hookedPackageManager
-            }
-
-            WorkingMode.SYSTEM, WorkingMode.UserService -> {
-                Timber.tag(TAG).d("Getting IPackageManager in ${workingMode.name} Mode.")
-                IPackageManager.Stub.asInterface(ServiceManager.getService("package"))
-            }
-        }
+        runtime.packageManager()
     }
 
     private val iActivityManager: IActivityManager by lazy {
-        when (workingMode) {
-            WorkingMode.ROOT -> {
-                Timber.tag(TAG).d("Getting IActivityManager in Process Hook Mode.")
-                val original = ServiceManager.getService(Context.ACTIVITY_SERVICE)
-                IActivityManager.Stub.asInterface(binderWrapper!!.invoke(original))
-            }
-
-            WorkingMode.SHIZUKU -> {
-                ShizukuHook.hookedActivityManager
-            }
-
-            WorkingMode.SYSTEM, WorkingMode.UserService -> {
-                Timber.tag(TAG).d("Getting IActivityManager in ${workingMode.name} Mode.")
-                IActivityManager.Stub.asInterface(ServiceManager.getService(Context.ACTIVITY_SERVICE))
-            }
-        }
+        runtime.activityManager()
     }
 
     private val iUserManager: IUserManager by lazy {
-        when (workingMode) {
-            WorkingMode.ROOT -> {
-                Timber.tag(TAG).d("Getting IUserManager in Process Hook Mode.")
-                val original = ServiceManager.getService(Context.USER_SERVICE)
-                IUserManager.Stub.asInterface(binderWrapper!!.invoke(original))
-            }
-
-            WorkingMode.SHIZUKU -> {
-                Timber.tag(TAG).d("Getting IUserManager in Hook Mode (From ShizukuHook Factory).")
-                ShizukuHook.hookedUserManager
-            }
-
-            WorkingMode.SYSTEM, WorkingMode.UserService -> {
-                Timber.tag(TAG).d("Getting IUserManager in ${workingMode.name} Mode.")
-                IUserManager.Stub.asInterface(ServiceManager.getService(Context.USER_SERVICE))
-            }
-        }
+        runtime.userManager()
     }
 
     private val settingsBinder: IBinder? by lazy {
-        val original = reflect.resolveSettingsBinder()?.originalBinder
-
-        when (workingMode) {
-            WorkingMode.ROOT -> {
-                Timber.tag(TAG).d("Getting Settings Binder in Process Hook Mode.")
-                if (original != null) binderWrapper!!.invoke(original) else null
-            }
-
-            WorkingMode.SHIZUKU -> {
-                Timber.tag(TAG).d("Getting Settings Binder in Hook Mode (via ShizukuHook).")
-                ShizukuHook.hookedSettingsBinder
-            }
-
-            WorkingMode.SYSTEM, WorkingMode.UserService -> {
-                Timber.tag(TAG).d("Getting Settings Binder in ${workingMode.name} Mode.")
-                original
-            }
-        }
+        runtime.settingsBinder(reflect)
     }
 
     private val iConnectivityManager: IConnectivityManager by lazy {
-        when (workingMode) {
-            WorkingMode.ROOT -> {
-                Timber.tag(TAG).d("Getting IConnectivityManager in Process Hook Mode.")
-                val original = ServiceManager.getService(Context.CONNECTIVITY_SERVICE)
-                IConnectivityManager.Stub.asInterface(binderWrapper!!.invoke(original))
-            }
-
-            WorkingMode.SHIZUKU -> {
-                Timber.tag(TAG).d("Getting IConnectivityManager in Hook Mode (via ShizukuHook).")
-                ShizukuHook.hookedConnectivityManager
-            }
-
-            WorkingMode.SYSTEM, WorkingMode.UserService -> {
-                Timber.tag(TAG).d("Getting IConnectivityManager in ${workingMode.name} Mode.")
-                IConnectivityManager.Stub.asInterface(ServiceManager.getService(Context.CONNECTIVITY_SERVICE))
-            }
-        }
+        runtime.connectivityManager()
     }
 
     override fun delete(paths: Array<out String>) = deletePaths(paths.toList())
@@ -185,39 +98,55 @@ class DefaultPrivilegedService(
         Timber.tag(TAG).d("performDexOpt: $packageName, filter=$compilerFilter, force=$force")
 
         return try {
-            val result = iPackageManager.performDexOptMode(
-                packageName,
-                false,          // checkProfiles
-                compilerFilter,
-                force,
-                true,           // bootComplete
-                null            // splitName
+            val args = buildList {
+                add("compile")
+                add("-m")
+                add(compilerFilter)
+
+                if (force) {
+                    add("-f")
+                }
+
+                add(packageName)
+            }.toTypedArray()
+
+            // Important: this must be the wrapped package binder.
+            // Do not call ServiceManager.getService("package") again here.
+            sendPackageShellCommandOneway(
+                binder = iPackageManager.asBinder(),
+                args = args
             )
 
-            Timber.tag(TAG).i("performDexOpt result for $packageName: $result")
-            result
+            Timber.tag(TAG).d("Dexopt command dispatched: ${args.joinToString(" ")}")
+            true
         } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "performDexOpt failed for $packageName")
+            Timber.tag(TAG).e(e, "Failed to dispatch dexopt for $packageName")
             false
         }
     }
 
     override fun setDefaultInstaller(component: ComponentName, enable: Boolean) {
         val userId = AndroidProcess.myUid() / 100000
-        // Use the cached mode to determine system-level permission (su 1000 in this case)
-        val hasSystemLevelPermission = workingMode == WorkingMode.ROOT
+        val effectiveUid = Os.geteuid()
+        val canCallSystemRestrictedPreferredApis =
+            runtime.canCallSystemRestrictedPreferredApis || effectiveUid == SYSTEM_UID
 
         Timber.tag(TAG).d(
-            "setDefaultInstaller called: component=%s, enable=%b, userId=%d, rootMode=%b",
+            "setDefaultInstaller called: component=%s, enable=%b, userId=%d, effectiveUid=%d, canCallSystemRestrictedPreferredApis=%b",
             component.flattenToShortString(),
             enable,
             userId,
-            hasSystemLevelPermission
+            effectiveUid,
+            canCallSystemRestrictedPreferredApis
         )
 
         // Reset state for our own package
         Timber.tag(TAG).v("Resetting preferred state for %s", component.packageName)
-        clearPackageActivities(component.packageName, userId, hasSystemLevelPermission)
+        clearPackageActivities(
+            packageName = component.packageName,
+            userId = userId,
+            canCallSystemRestrictedPreferredApis = canCallSystemRestrictedPreferredApis
+        )
 
         if (!enable) {
             Timber.tag(TAG).i("Enable flag is false. Exiting after clearing own preferred activities.")
@@ -255,7 +184,11 @@ class DefaultPrivilegedService(
                 // Dynamically clear preferred activities for other apps
                 if (infoPackageName != component.packageName && infoPackageName != "android") {
                     // Use the extracted helper to clear competing apps
-                    clearPackageActivities(infoPackageName, userId, hasSystemLevelPermission)
+                    clearPackageActivities(
+                        packageName = infoPackageName,
+                        userId = userId,
+                        canCallSystemRestrictedPreferredApis = canCallSystemRestrictedPreferredApis
+                    )
                 }
 
                 names.add(ComponentName(infoPackageName, infoClassName))
@@ -281,7 +214,7 @@ class DefaultPrivilegedService(
                 component = component,
                 userId = userId,
                 removeExisting = true,
-                hasSystemLevelPermission = hasSystemLevelPermission
+                canCallSystemRestrictedPreferredApis = canCallSystemRestrictedPreferredApis
             )
         }
 
@@ -418,19 +351,7 @@ class DefaultPrivilegedService(
                 if (originalBinder != targetBinder) {
                     remoteField.set(provider, targetBinder)
                 }
-                val targetResolver = if (binderWrapper != null) {
-                    // [Root Mode] UID is 1000.
-                    // Must spoof package name "android" to pass AppOps check.
-                    Timber.tag(TAG).d("Root Mode: Using SystemContextResolver (UID 1000, Pkg: android)")
-                    val systemContext = SystemContext(context)
-                    object : ContentResolver(systemContext) {}
-                } else {
-                    // [Shizuku Mode] UID is 2000.
-                    // Must spoof package name "com.android.shell".
-                    Timber.tag(TAG).d("Shizuku Mode: Using ShellContextResolver (UID 2000, Pkg: com.android.shell)")
-                    val shellContext = ShizukuContext(context)
-                    object : ContentResolver(shellContext) {}
-                }
+                val targetResolver = object : ContentResolver(runtime.settingsResolverContext(context)) {}
 
                 val result = Settings.Global.putInt(targetResolver, key, targetValue)
                 Timber.tag(TAG).i("Set $key to $targetValue. Result: $result")
@@ -490,9 +411,7 @@ class DefaultPrivilegedService(
             val am = iActivityManager
 
             val userId = AndroidProcess.myUid() / 100000
-            val callerPackage = if (capabilityProvider.isSystemApp) {
-                context.packageName
-            } else "com.android.shell"
+            val callerPackage = runtime.activityCallerPackage(context)
             val resolvedType = intent.resolveType(context.contentResolver)
 
             val result = am.startActivityAsUser(
@@ -727,6 +646,7 @@ class DefaultPrivilegedService(
         return Bundle().apply {
             putCharSequence("appLabel", finalLabel)
             putString("packageName", packageName)
+            putString("installerPackageName", sessionInfo.installerPackageName)
             putBoolean("isUpdate", isUpdate)
             putBoolean("isOwnershipConflict", isOwnershipConflict)
 
@@ -802,6 +722,65 @@ class DefaultPrivilegedService(
         }
     }
 
+    @SuppressLint("PrivateApi")
+    private fun sendPackageShellCommandOneway(
+        binder: IBinder,
+        args: Array<String>
+    ) {
+        val data = Parcel.obtain()
+
+        val stdin = ParcelFileDescriptor.open(
+            File("/dev/null"),
+            ParcelFileDescriptor.MODE_READ_ONLY
+        )
+
+        val stdout = ParcelFileDescriptor.open(
+            File("/dev/null"),
+            ParcelFileDescriptor.MODE_WRITE_ONLY
+        )
+
+        val stderr = ParcelFileDescriptor.open(
+            File("/dev/null"),
+            ParcelFileDescriptor.MODE_WRITE_ONLY
+        )
+
+        try {
+            data.writeFileDescriptor(stdin.fileDescriptor)
+            data.writeFileDescriptor(stdout.fileDescriptor)
+            data.writeFileDescriptor(stderr.fileDescriptor)
+            data.writeStringArray(args)
+
+            writeNullShellCallback(data)
+
+            // Server still expects a ResultReceiver object, but we do not wait for it.
+            ResultReceiver(null).writeToParcel(data, 0)
+
+            binder.transact(
+                SHELL_COMMAND_TRANSACTION,
+                data,
+                null,
+                FLAG_ONEWAY
+            )
+        } finally {
+            data.recycle()
+            runCatching { stdin.close() }
+            runCatching { stdout.close() }
+            runCatching { stderr.close() }
+        }
+    }
+
+    @SuppressLint("PrivateApi")
+    private fun writeNullShellCallback(parcel: Parcel) {
+        val shellCallbackClass = Class.forName("android.os.ShellCallback")
+        val method = shellCallbackClass.getDeclaredMethod(
+            "writeToParcel",
+            shellCallbackClass,
+            Parcel::class.java
+        )
+
+        method.invoke(null, null, parcel)
+    }
+
     /**
      * Clears both preferred and persistent preferred activities for a specific package.
      * Includes error handling to prevent crashes on restricted environments.
@@ -809,7 +788,7 @@ class DefaultPrivilegedService(
     private fun clearPackageActivities(
         packageName: String,
         userId: Int,
-        hasSystemLevelPermission: Boolean
+        canCallSystemRestrictedPreferredApis: Boolean
     ) {
         // 1. Clear standard preferred activities (Always try)
         try {
@@ -819,11 +798,12 @@ class DefaultPrivilegedService(
             Timber.tag(TAG).w(e, "Failed to clear preferred activities for $packageName")
         }
 
-        // 2. Clear persistent preferred activities (Only if in Root mode)
-        if (hasSystemLevelPermission) {
+        // 2. Clear persistent preferred activities (Only if the runtime can call system-restricted APIs)
+        if (canCallSystemRestrictedPreferredApis) {
             try {
                 Timber.tag(TAG).d("Clearing persistent preferred activities for $packageName")
-                iPackageManager.clearPackagePersistentPreferredActivities(packageName, userId)
+                packageManagerFromContext().clearPackagePersistentPreferredActivities(packageName, userId)
+                Timber.tag(TAG).d("Successfully cleared persistent preferred activities for $packageName")
             } catch (e: SecurityException) {
                 // Specific log for the "only be run by the system" issue
                 Timber.tag(TAG).e(e, "SecurityException: System restricted clearing persistent preferred for $packageName")
@@ -845,7 +825,7 @@ class DefaultPrivilegedService(
         component: ComponentName,
         userId: Int,
         removeExisting: Boolean,
-        hasSystemLevelPermission: Boolean
+        canCallSystemRestrictedPreferredApis: Boolean
     ) {
         // 1. Add standard preferred activity
         try {
@@ -859,11 +839,12 @@ class DefaultPrivilegedService(
             Timber.e(e, "Failed to add preferred activity for %s", component.packageName)
         }
 
-        // 2. Add persistent preferred activity (Only if in Root mode)
-        if (hasSystemLevelPermission) {
-            Timber.tag(TAG).d("Adding persistent preferred activity for %s", component.packageName)
+        // 2. Add persistent preferred activity (Only if the runtime can call system-restricted APIs)
+        if (canCallSystemRestrictedPreferredApis) {
             try {
-                iPackageManager.addPersistentPreferredActivity(filter, component, userId)
+                Timber.tag(TAG).d("Adding persistent preferred activity for %s", component.packageName)
+                packageManagerFromContext().addPersistentPreferredActivity(filter, component, userId)
+                Timber.tag(TAG).d("Successfully added persistent preferred activity for %s", component.packageName)
             } catch (e: SecurityException) {
                 Timber.e(e, "SecurityException: System restricted adding persistent preferred for %s", component.packageName)
             } catch (e: Exception) {
@@ -871,6 +852,10 @@ class DefaultPrivilegedService(
             }
         }
     }
+
+    private fun packageManagerFromContext(): IPackageManager =
+        reflect.getValue<IPackageManager>(context.packageManager, "mPM")
+            ?: iPackageManager
 
     private fun queryIntentActivities(
         iPackageManager: IPackageManager,

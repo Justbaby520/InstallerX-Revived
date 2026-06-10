@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 InstallerX Revived contributors
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.rosan.installer.ui.page.main.settings.home.installer
 
 import android.annotation.SuppressLint
+import android.os.SystemClock
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -25,12 +29,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -58,14 +62,15 @@ import com.rosan.installer.ui.navigation.LocalNavigator
 import com.rosan.installer.ui.page.main.settings.home.HomePageViewAction
 import com.rosan.installer.ui.page.main.settings.home.HomePageViewEvent
 import com.rosan.installer.ui.page.main.settings.home.HomePageViewModel
+import com.rosan.installer.ui.page.main.settings.home.delayDefaultInstallerProgressIfNeeded
 import com.rosan.installer.ui.page.main.widget.card.InfoTipCard
 import com.rosan.installer.ui.page.main.widget.card.TitleTipCard
 import com.rosan.installer.ui.page.main.widget.dialog.ErrorDisplayDialog
 import com.rosan.installer.ui.page.main.widget.setting.BaseWidget
+import com.rosan.installer.ui.page.main.widget.setting.BlockingLoadingIndicator
 import com.rosan.installer.ui.page.main.widget.setting.ExpressiveBackButton
 import com.rosan.installer.ui.page.main.widget.setting.SegmentedColumn
 import com.rosan.installer.ui.page.main.widget.setting.SwitchWidget
-import com.rosan.installer.ui.page.main.widget.snackbar.SwipeableSnackbarHost
 import com.rosan.installer.ui.theme.getMaterial3AppBarColor
 import com.rosan.installer.ui.theme.installerMaterial3BlurEffect
 import com.rosan.installer.ui.theme.rememberMaterial3BlurBackdrop
@@ -89,20 +94,40 @@ fun DefaultInstallerPage(
 
     val backdrop = rememberMaterial3BlurBackdrop(useBlur)
 
-    val snackBarHostState = remember { SnackbarHostState() }
     var errorDialogInfo by remember {
         mutableStateOf<HomePageViewEvent.ShowDefaultInstallerErrorDetail?>(null)
+    }
+    var showDefaultInstallerProgress by remember { mutableStateOf(false) }
+    var defaultInstallerProgressStartedAt by remember { mutableStateOf(0L) }
+    var defaultInstallerProgressTextResId by remember {
+        mutableStateOf(R.string.locking_default_installer)
+    }
+
+    fun dispatchSetDefaultInstaller(lock: Boolean) {
+        defaultInstallerProgressStartedAt = SystemClock.elapsedRealtime()
+        defaultInstallerProgressTextResId =
+            if (lock) R.string.locking_default_installer else R.string.unlocking_default_installer
+        showDefaultInstallerProgress = true
+        viewModel.dispatch(HomePageViewAction.SetDefaultInstaller(lock))
+    }
+
+    suspend fun dismissDefaultInstallerProgress() {
+        if (showDefaultInstallerProgress) {
+            delayDefaultInstallerProgressIfNeeded(defaultInstallerProgressStartedAt)
+            showDefaultInstallerProgress = false
+        }
     }
 
     @SuppressLint("LocalContextGetResourceValueCall") LaunchedEffect(Unit) {
         viewModel.uiEvents.collect { event ->
-            snackBarHostState.currentSnackbarData?.dismiss()
             when (event) {
                 is HomePageViewEvent.ShowDefaultInstallerResult -> {
-                    snackBarHostState.showSnackbar(context.getString(event.messageResId))
+                    dismissDefaultInstallerProgress()
+                    Toast.makeText(context, context.getString(event.messageResId), Toast.LENGTH_SHORT).show()
                 }
 
                 is HomePageViewEvent.ShowDefaultInstallerErrorDetail -> {
+                    dismissDefaultInstallerProgress()
                     errorDialogInfo = event
                 }
             }
@@ -133,11 +158,6 @@ fun DefaultInstallerPage(
                     titleContentColor = MaterialTheme.colorScheme.onBackground,
                     scrolledContainerColor = backdrop.getMaterial3AppBarColor()
                 )
-            )
-        },
-        snackbarHost = {
-            SwipeableSnackbarHost(
-                hostState = snackBarHostState
             )
         },
     ) { paddingValues ->
@@ -181,7 +201,7 @@ fun DefaultInstallerPage(
                             title = stringResource(R.string.lock_default_installer),
                             description = stringResource(R.string.lock_default_installer_desc),
                             enabled = uiState.globalAuthorizer != Authorizer.None,
-                            onClick = { viewModel.dispatch(HomePageViewAction.SetDefaultInstaller(true)) }
+                            onClick = { dispatchSetDefaultInstaller(true) }
                         )
                     }
                     item {
@@ -192,7 +212,7 @@ fun DefaultInstallerPage(
                             description =
                                 stringResource(R.string.unlock_default_installer_desc),
                             enabled = uiState.globalAuthorizer != Authorizer.None,
-                            onClick = { viewModel.dispatch(HomePageViewAction.SetDefaultInstaller(false)) }
+                            onClick = { dispatchSetDefaultInstaller(false) }
                         )
                     }
                 }
@@ -263,9 +283,20 @@ fun DefaultInstallerPage(
             onDismissRequest = { errorDialogInfo = null },
             onRetry = {
                 errorDialogInfo = null
-                viewModel.dispatch(dialogInfo.retryAction)
+                val action = dialogInfo.retryAction
+                if (action is HomePageViewAction.SetDefaultInstaller) {
+                    dispatchSetDefaultInstaller(action.lock)
+                } else {
+                    viewModel.dispatch(action)
+                }
             },
             title = stringResource(dialogInfo.titleResId)
         )
     }
+
+    BlockingLoadingIndicator(
+        visible = showDefaultInstallerProgress,
+        text = stringResource(defaultInstallerProgressTextResId),
+        backdrop = backdrop
+    )
 }
