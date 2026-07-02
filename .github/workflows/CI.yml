@@ -177,10 +177,12 @@ jobs:
           echo "--- Generated Changelog for Release Body ---"
           echo -e "${CHANGELOG_BODY_OUTPUT}${CHANGELOG_LINK_OUTPUT}"
 
-      - name: Inject APK into archive
+      - name: Inject APK and update module.prop
         id: inject_apk
         run: |
           ARCHIVE="./AOSP-online.zip"
+          VERSION_TAG="${{ steps.rename_apks.outputs.version_tag }}"
+
           TARGET_DIR="system/priv-app/PackageInstaller"
           TARGET_PATH="${TARGET_DIR}/PackageInstaller.apk"
 
@@ -189,6 +191,17 @@ jobs:
 
           zip -d "${ARCHIVE}" "${TARGET_PATH}" || true
           zip -u "${ARCHIVE}" "${TARGET_PATH}"
+
+          MODULE_PROP="module.prop"
+
+          unzip -p "${ARCHIVE}" "${MODULE_PROP}" > "${MODULE_PROP}"
+
+          sed -i "s/^version=.*/version=${VERSION_TAG}/" "${MODULE_PROP}"
+
+          grep "^version=" "${MODULE_PROP}"
+
+          zip -d "${ARCHIVE}" "${MODULE_PROP}" || true
+          zip -u "${ARCHIVE}" "${MODULE_PROP}"
 
           echo "archive_path=${ARCHIVE}" >> "$GITHUB_OUTPUT"
 
