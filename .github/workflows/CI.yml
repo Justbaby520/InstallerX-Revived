@@ -179,7 +179,7 @@ jobs:
 
       - name: Inject APK into archive
         run: |
-          ARCHIVE="AOSP-online.zip"
+          ARCHIVE="./AOSP-online.zip"
           TARGET_DIR="system/priv-app/PackageInstaller"
           TARGET_PATH="${TARGET_DIR}/PackageInstaller.apk"
 
