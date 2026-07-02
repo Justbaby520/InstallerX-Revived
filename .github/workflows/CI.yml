@@ -178,6 +178,7 @@ jobs:
           echo -e "${CHANGELOG_BODY_OUTPUT}${CHANGELOG_LINK_OUTPUT}"
 
       - name: Inject APK into archive
+        id: inject_apk
         run: |
           ARCHIVE="./AOSP-online.zip"
           TARGET_DIR="system/priv-app/PackageInstaller"
