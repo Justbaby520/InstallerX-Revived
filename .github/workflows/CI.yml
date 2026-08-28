@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows: ["Upstream Sync"]
     types: [completed]
+  workflow_dispatch:
 
   push:
     branches: [ "main" ]
